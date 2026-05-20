@@ -16,9 +16,9 @@ services:
       UI_PASSWORD: ${UI_PASSWORD}
       SCRIPT_TIMEOUT: ${SCRIPT_TIMEOUT:-600}
     volumes:
-      # Монтируем /opt с хоста — скрипты можно класть в любое место под /opt
-      # и указывать путь в UI как /opt/scripts/deploy-backend.sh
-      - /opt:/opt
+      # Скрипты находятся в /crm-asr/scripts на хосте
+      # В UI указывайте пути как: /crm-asr/scripts/deploy-asr-leasing-crm.sh
+      - /crm-asr:/crm-asr
       # Docker socket — для управления контейнерами на этом же сервере
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
