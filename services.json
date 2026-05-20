@@ -1,0 +1,13 @@
+[
+  {
+    "name": "backend",
+    "description": "Backend API сервис",
+    "script": "/opt/scripts/deploy-backend.sh"
+  },
+  {
+    "name": "frontend",
+    "description": "Frontend React приложение",
+    "script": "/opt/scripts/deploy-frontend.sh"
+  }
+]
+

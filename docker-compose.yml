@@ -1,0 +1,55 @@
+services:
+  # ── Deploy Service ─────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deploy-service
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      PORT: "8080"
+      SECRET_TOKEN: ${SECRET_TOKEN}
+      DATABASE_URL: "postgres://${POSTGRES_USER:-deploy}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-deploy_db}?sslmode=disable"
+      UI_USERNAME: ${UI_USERNAME:-admin}
+      UI_PASSWORD: ${UI_PASSWORD}
+      SCRIPT_TIMEOUT: ${SCRIPT_TIMEOUT:-600}
+    volumes:
+      # Скрипты деплоя — папка scripts/ рядом с docker-compose.yml
+      # На Linux сервере можно заменить на: /opt/scripts:/opt/scripts:ro
+      - ./scripts:/opt/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - deploy-net
+
+  # ── PostgreSQL ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: deploy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-deploy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-deploy_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deploy} -d ${POSTGRES_DB:-deploy_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - deploy-net
+    # ports:
+    #   - "127.0.0.1:5432:5432"  # закомментировано — порт уже занят локальным PostgreSQL
+
+volumes:
+  postgres-data:
+
+networks:
+  deploy-net:
+    driver: bridge
+

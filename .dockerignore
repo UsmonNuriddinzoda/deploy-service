@@ -1,0 +1,8 @@
+.git
+.gitignore
+*.md
+.env
+deploy.sh
+services.json
+go.sum
+

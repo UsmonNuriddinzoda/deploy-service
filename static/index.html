@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeployHub</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a; --border: #2e3350;
+      --accent: #5865f2; --accent-h: #4752c4; --green: #3ba55d; --red: #ed4245;
+      --yellow: #faa61a; --text: #e3e5e8; --muted: #72767d; --radius: 10px;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; min-height: 100vh; }
+
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 32px; height: 60px; display: flex; align-items: center;
+      justify-content: space-between; position: sticky; top: 0; z-index: 100;
+    }
+    .logo { font-size: 18px; font-weight: 800; letter-spacing: .5px; }
+    .logo span { color: var(--accent); }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .btn-logout {
+      background: transparent; border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 14px; color: var(--muted); font-size: 13px; cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .btn-logout:hover { border-color: var(--red); color: var(--red); }
+
+    main { max-width: 1000px; margin: 0 auto; padding: 32px 24px; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); }
+
+    .btn {
+      padding: 9px 18px; border-radius: 6px; border: none; cursor: pointer;
+      font-size: 14px; font-weight: 600; display: inline-flex; align-items: center;
+      gap: 6px; white-space: nowrap; transition: opacity .15s, background .15s;
+    }
+    .btn:active { opacity: .8; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-h); }
+    .btn-success { background: var(--green); color: #fff; }
+    .btn-success:hover { opacity: .85; }
+    .btn-danger  { background: var(--red); color: #fff; }
+    .btn-danger:hover  { opacity: .85; }
+    .btn-ghost   { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover   { border-color: var(--accent); color: var(--accent); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+
+    #services-list { display: flex; flex-direction: column; gap: 8px; }
+    .svc-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 16px 20px; display: flex; align-items: center; gap: 16px; transition: border-color .15s;
+    }
+    .svc-card:hover { border-color: #3d4470; }
+    .svc-info { flex: 1; min-width: 0; }
+    .svc-name { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+    .svc-desc { font-size: 13px; color: var(--muted); margin-top: 3px; }
+    .svc-script { font-family: 'Fira Code', monospace; font-size: 12px; color: var(--accent); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .svc-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+    .badge-running { background: rgba(250,166,26,.12); color: var(--yellow); }
+    .badge-success { background: rgba(59,165,93,.12); color: var(--green); }
+    .badge-error   { background: rgba(237,66,69,.12); color: var(--red); }
+
+    #log-panel { margin-top: 20px; background: #080b12; border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; display: none; }
+    #log-panel.visible { display: block; }
+    .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .log-title { font-size: 13px; font-weight: 700; }
+    .log-body { font-family: 'Fira Code', monospace; font-size: 13px; line-height: 1.75; white-space: pre-wrap; word-break: break-all; max-height: 380px; overflow-y: auto; }
+    .log-stdout { color: #a6e3a1; }
+    .log-stderr { color: #f38ba8; margin-top: 8px; }
+    .log-meta { color: var(--muted); font-size: 12px; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 32px 36px; width: 500px; max-width: 96vw; }
+    .modal-title { font-size: 18px; font-weight: 800; margin-bottom: 24px; }
+    .form-group { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+    .form-group input { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 11px 14px; color: var(--text); font-size: 14px; transition: border-color .15s; }
+    .form-group input:focus { outline: none; border-color: var(--accent); }
+    .form-group .hint { font-size: 11px; color: var(--muted); }
+    .field-error { color: var(--red); font-size: 13px; min-height: 18px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+
+    #toast-container { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 999; }
+    .toast { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; font-size: 14px; animation: slide-in .2s ease; max-width: 320px; }
+    .toast.success { border-color: var(--green); color: var(--green); }
+    .toast.error   { border-color: var(--red);   color: var(--red); }
+    @keyframes slide-in { from { transform: translateX(60px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    .empty { text-align: center; color: var(--muted); padding: 56px 0; font-size: 14px; }
+    .empty .icon { font-size: 44px; margin-bottom: 12px; }
+    .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.25); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Deploy<span>Hub</span></div>
+  <div class="header-right">
+    <button class="btn-logout" onclick="logout()">⬡ Выйти</button>
+  </div>
+</header>
+
+<main>
+  <div class="section-header">
+    <span class="section-title">Сервисы</span>
+    <button class="btn btn-primary btn-sm" onclick="openAddModal()">＋ Добавить сервис</button>
+  </div>
+
+  <div id="services-list">
+    <div class="empty"><div class="icon">⏳</div>Загрузка...</div>
+  </div>
+
+  <div id="log-panel">
+    <div class="log-header">
+      <span class="log-title" id="log-title">Вывод деплоя</span>
+      <button class="btn btn-ghost btn-sm" onclick="closeLog()">✕ Закрыть</button>
+    </div>
+    <div id="log-stdout" class="log-body log-stdout"></div>
+    <div id="log-stderr" class="log-body log-stderr"></div>
+    <div id="log-meta"   class="log-meta"></div>
+  </div>
+</main>
+
+<!-- ── Add Modal ── -->
+<div id="add-modal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-title">➕ Новый сервис</div>
+    <div class="form-group">
+      <label>Название *</label>
+      <input id="add-name" placeholder="backend" autocomplete="off" />
+      <span class="hint">Только латиница, цифры, дефис, подчёркивание</span>
+    </div>
+    <div class="form-group">
+      <label>Путь к скрипту *</label>
+      <input id="add-script" placeholder="/opt/scripts/deploy-backend.sh" />
+      <span class="hint">Абсолютный путь к bash-скрипту на сервере</span>
+    </div>
+    <div class="form-group">
+      <label>Описание</label>
+      <input id="add-desc" placeholder="Backend API (необязательно)" />
+    </div>
+    <div id="add-error" class="field-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeAddModal()">Отмена</button>
+      <button class="btn btn-primary" id="add-btn" onclick="submitAdd()">➕ Добавить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Edit Modal ── -->
+<div id="edit-modal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-title">✏️ Редактировать сервис</div>
+    <input type="hidden" id="edit-name" />
+    <div class="form-group">
+      <label>Путь к скрипту *</label>
+      <input id="edit-script" placeholder="/opt/scripts/deploy.sh" />
+    </div>
+    <div class="form-group">
+      <label>Описание</label>
+      <input id="edit-desc" placeholder="Описание сервиса" />
+    </div>
+    <div id="edit-error" class="field-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeEditModal()">Отмена</button>
+      <button class="btn btn-primary" onclick="saveEdit()">💾 Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+// ── API (uses session cookie automatically) ───────────────────
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthorized'); }
+  const text = await res.text();
+  let json; try { json = JSON.parse(text); } catch { json = { error: text }; }
+  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+  return json;
+}
+
+// ── State ─────────────────────────────────────────────────────
+let deployStates = {};
+
+// ── Load & Render ─────────────────────────────────────────────
+async function loadServices() {
+  try {
+    const services = await api('GET', '/services');
+    renderServices(services || []);
+  } catch(e) {
+    if (e.message !== 'unauthorized')
+      document.getElementById('services-list').innerHTML =
+        `<div class="empty"><div class="icon">⚠️</div>${e.message}</div>`;
+  }
+}
+
+function renderServices(services) {
+  const list = document.getElementById('services-list');
+  if (!services.length) {
+    list.innerHTML = `<div class="empty"><div class="icon">📭</div>Нет сервисов.<br>
+      <button class="btn btn-primary btn-sm" style="margin-top:16px" onclick="openAddModal()">➕ Добавить первый</button></div>`;
+    return;
+  }
+  list.innerHTML = services.map(s => {
+    const st = deployStates[s.name];
+    const badge = st==='running' ? `<span class="badge badge-running"><span class="spinner"></span> Деплой...</span>`
+                : st==='success' ? `<span class="badge badge-success">✓ Готово</span>`
+                : st==='error'   ? `<span class="badge badge-error">✗ Ошибка</span>` : '';
+    return `<div class="svc-card" id="svc-${esc(s.name)}">
+      <div class="svc-info">
+        <div class="svc-name">${esc(s.name)} ${badge}</div>
+        ${s.description ? `<div class="svc-desc">${esc(s.description)}</div>` : ''}
+        <div class="svc-script">📄 ${esc(s.script)}</div>
+      </div>
+      <div class="svc-actions">
+        <button class="btn btn-success btn-sm" onclick="deploy('${esc(s.name)}')" ${st==='running'?'disabled':''}>🚀 Deploy</button>
+        <button class="btn btn-ghost btn-sm" title="Редактировать" onclick="openEditModal('${esc(s.name)}','${esc(s.description||'')}','${esc(s.script)}')">✏️</button>
+        <button class="btn btn-danger btn-sm" title="Удалить" onclick="deleteService('${esc(s.name)}')">🗑️</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Add Modal ─────────────────────────────────────────────────
+function openAddModal() {
+  ['add-name','add-script','add-desc'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('add-error').textContent = '';
+  document.getElementById('add-modal').classList.add('open');
+  setTimeout(() => document.getElementById('add-name').focus(), 60);
+}
+function closeAddModal() { document.getElementById('add-modal').classList.remove('open'); }
+
+async function submitAdd() {
+  const name   = document.getElementById('add-name').value.trim();
+  const script = document.getElementById('add-script').value.trim();
+  const desc   = document.getElementById('add-desc').value.trim();
+  const errEl  = document.getElementById('add-error');
+  const btn    = document.getElementById('add-btn');
+  errEl.textContent = '';
+  if (!name)   { errEl.textContent = 'Введите название'; return; }
+  if (!/^[a-z0-9_-]+$/i.test(name)) { errEl.textContent = 'Только буквы, цифры, дефис, подчёркивание'; return; }
+  if (!script) { errEl.textContent = 'Введите путь к скрипту'; return; }
+
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Сохранение...';
+  try {
+    await api('POST', '/services', { name, description: desc, script });
+    toast(`✅ Сервис «${name}» добавлен`, 'success');
+    closeAddModal(); loadServices();
+  } catch(e) { errEl.textContent = e.message; }
+  finally { btn.disabled = false; btn.innerHTML = '➕ Добавить'; }
+}
+
+// ── Edit Modal ────────────────────────────────────────────────
+function openEditModal(name, desc, script) {
+  document.getElementById('edit-name').value   = name;
+  document.getElementById('edit-desc').value   = desc;
+  document.getElementById('edit-script').value = script;
+  document.getElementById('edit-error').textContent = '';
+  document.getElementById('edit-modal').classList.add('open');
+  setTimeout(() => document.getElementById('edit-script').focus(), 60);
+}
+function closeEditModal() { document.getElementById('edit-modal').classList.remove('open'); }
+
+async function saveEdit() {
+  const name   = document.getElementById('edit-name').value;
+  const desc   = document.getElementById('edit-desc').value.trim();
+  const script = document.getElementById('edit-script').value.trim();
+  const errEl  = document.getElementById('edit-error');
+  errEl.textContent = '';
+  if (!script) { errEl.textContent = 'Путь к скрипту обязателен'; return; }
+  try {
+    await api('PUT', `/services/${name}`, { description: desc, script });
+    toast(`✅ Сервис «${name}» обновлён`, 'success');
+    closeEditModal(); loadServices();
+  } catch(e) { errEl.textContent = e.message; }
+}
+
+// ── Delete ────────────────────────────────────────────────────
+async function deleteService(name) {
+  if (!confirm(`Удалить сервис «${name}»?\nЭто действие нельзя отменить.`)) return;
+  try {
+    await api('DELETE', `/services/${name}`);
+    toast(`🗑️ Сервис «${name}» удалён`, 'success');
+    loadServices();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Deploy ────────────────────────────────────────────────────
+async function deploy(name) {
+  deployStates[name] = 'running'; loadServices();
+  const panel = document.getElementById('log-panel');
+  document.getElementById('log-title').textContent  = `🚀 Деплой: ${name}`;
+  document.getElementById('log-stdout').textContent = '';
+  document.getElementById('log-stderr').textContent = '';
+  document.getElementById('log-meta').textContent   = '⏳ Выполняется...';
+  panel.classList.add('visible');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  try {
+    const res = await api('POST', `/deploy/${name}`);
+    deployStates[name] = res.success ? 'success' : 'error';
+    document.getElementById('log-stdout').textContent = res.stdout || '(нет вывода)';
+    document.getElementById('log-stderr').textContent = res.stderr ? `STDERR:\n${res.stderr}` : '';
+    document.getElementById('log-meta').textContent   = `⏱ Время: ${res.duration}   |   ${res.success ? '✅ Успешно' : '❌ Ошибка'}`;
+    toast(res.success ? `✅ ${name} задеплоен` : `❌ ${name}: ошибка`, res.success ? 'success' : 'error');
+  } catch(e) {
+    if (e.message === 'unauthorized') return;
+    deployStates[name] = 'error';
+    document.getElementById('log-stderr').textContent = e.message;
+    document.getElementById('log-meta').textContent   = '❌ Запрос не удался';
+    toast(e.message, 'error');
+  }
+  loadServices();
+}
+function closeLog() { document.getElementById('log-panel').classList.remove('visible'); }
+
+// ── Logout ────────────────────────────────────────────────────
+async function logout() {
+  await fetch('/ui/logout', { method: 'POST', credentials: 'same-origin' });
+  window.location.href = '/login';
+}
+
+// ── Toast ─────────────────────────────────────────────────────
+function toast(msg, type='') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`; el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── Utils ─────────────────────────────────────────────────────
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Close modals on overlay click
+['add-modal','edit-modal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', function(e) { if(e.target===this) this.classList.remove('open'); });
+});
+
+// Enter key submits add form
+['add-name','add-script','add-desc'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => { if(e.key==='Enter') submitAdd(); });
+});
+
+loadServices();
+setInterval(loadServices, 15000);
+</script>
+</body>
+</html>
+

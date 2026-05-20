@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deploy Service — Вход</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2e3350;
+      --accent: #5865f2;
+      --accent-h: #4752c4;
+      --red: #ed4245;
+      --text: #e3e5e8;
+      --muted: #72767d;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .login-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 40px 44px;
+      width: 380px;
+      max-width: 95vw;
+    }
+    .logo {
+      text-align: center;
+      font-size: 26px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      letter-spacing: .5px;
+    }
+    .logo span { color: var(--accent); }
+    .sub {
+      text-align: center;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 32px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    label { font-size: 13px; color: var(--muted); }
+    input {
+      background: #0f1117;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 11px 14px;
+      color: var(--text);
+      font-size: 15px;
+      transition: border-color .15s;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background .15s;
+    }
+    .btn:hover { background: var(--accent-h); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .error-msg {
+      background: rgba(237,66,69,.1);
+      border: 1px solid var(--red);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--red);
+      margin-top: 14px;
+      display: none;
+    }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      display: inline-block;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <div class="logo">Deploy<span>Hub</span></div>
+    <div class="sub">Войдите для управления деплоем</div>
+
+    <form id="login-form" onsubmit="doLogin(event)">
+      <div class="form-group">
+        <label>Имя пользователя</label>
+        <input id="username" type="text" placeholder="admin" autocomplete="username" required autofocus />
+      </div>
+      <div class="form-group">
+        <label>Пароль</label>
+        <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" required />
+      </div>
+      <button class="btn" id="login-btn" type="submit">Войти</button>
+    </form>
+
+    <div id="error-msg" class="error-msg"></div>
+  </div>
+
+  <script>
+    async function doLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      const err = document.getElementById('error-msg');
+      err.style.display = 'none';
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Вход...';
+
+      try {
+        const res = await fetch('/ui/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || 'Неверный логин или пароль');
+        }
+        window.location.href = '/';
+      } catch(ex) {
+        err.textContent = ex.message;
+        err.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Войти';
+      }
+    }
+  </script>
+</body>
+</html>
+
