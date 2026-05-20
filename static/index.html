@@ -70,9 +70,14 @@
     #log-panel.visible { display: block; }
     .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .log-title { font-size: 13px; font-weight: 700; }
-    .log-body { font-family: 'Fira Code', monospace; font-size: 13px; line-height: 1.75; white-space: pre-wrap; word-break: break-all; max-height: 380px; overflow-y: auto; }
-    .log-stdout { color: #a6e3a1; }
-    .log-stderr { color: #f38ba8; margin-top: 8px; }
+    .log-body {
+      font-family: 'Fira Code', monospace; font-size: 13px; line-height: 1.75;
+      white-space: pre-wrap; word-break: break-all;
+      max-height: 480px; overflow-y: auto;
+      background: #050810; border-radius: 6px; padding: 12px 14px;
+    }
+    .log-line-stdout { color: #a6e3a1; }
+    .log-line-stderr { color: #f38ba8; }
     .log-meta { color: var(--muted); font-size: 12px; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; align-items: center; justify-content: center; }
@@ -123,9 +128,8 @@
       <span class="log-title" id="log-title">Вывод деплоя</span>
       <button class="btn btn-ghost btn-sm" onclick="closeLog()">✕ Закрыть</button>
     </div>
-    <div id="log-stdout" class="log-body log-stdout"></div>
-    <div id="log-stderr" class="log-body log-stderr"></div>
-    <div id="log-meta"   class="log-meta"></div>
+    <div id="log-body" class="log-body"></div>
+    <div id="log-meta" class="log-meta"></div>
   </div>
 </main>
 
@@ -300,33 +304,112 @@ async function deleteService(name) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-// ── Deploy ────────────────────────────────────────────────────
+// ── Deploy (SSE streaming) ────────────────────────────────────
+let currentES = null;
+
+function appendLine(text, type) {
+  const body = document.getElementById('log-body');
+  const line = document.createElement('div');
+  line.className = type === 'stderr' ? 'log-line-stderr' : 'log-line-stdout';
+  line.textContent = text;
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+}
+
 async function deploy(name) {
+  // Закрываем предыдущий стрим если есть
+  if (currentES) { currentES.close(); currentES = null; }
+
   deployStates[name] = 'running'; loadServices();
+
   const panel = document.getElementById('log-panel');
-  document.getElementById('log-title').textContent  = `🚀 Деплой: ${name}`;
-  document.getElementById('log-stdout').textContent = '';
-  document.getElementById('log-stderr').textContent = '';
-  document.getElementById('log-meta').textContent   = '⏳ Выполняется...';
+  document.getElementById('log-title').textContent = `🚀 Деплой: ${name}`;
+  document.getElementById('log-body').innerHTML = '';
+  document.getElementById('log-meta').textContent = '⏳ Выполняется...';
   panel.classList.add('visible');
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Открываем SSE соединение через GET /deploy/{name}/stream
+  // Браузерный EventSource не поддерживает кастомные заголовки,
+  // поэтому используем fetch с ReadableStream
+  let response;
   try {
-    const res = await api('POST', `/deploy/${name}`);
-    deployStates[name] = res.success ? 'success' : 'error';
-    document.getElementById('log-stdout').textContent = res.stdout || '(нет вывода)';
-    document.getElementById('log-stderr').textContent = res.stderr ? `STDERR:\n${res.stderr}` : '';
-    document.getElementById('log-meta').textContent   = `⏱ Время: ${res.duration}   |   ${res.success ? '✅ Успешно' : '❌ Ошибка'}`;
-    toast(res.success ? `✅ ${name} задеплоен` : `❌ ${name}: ошибка`, res.success ? 'success' : 'error');
+    response = await fetch(`/deploy/${name}/stream`, {
+      method: 'GET',
+      credentials: 'same-origin',
+    });
   } catch(e) {
-    if (e.message === 'unauthorized') return;
     deployStates[name] = 'error';
-    document.getElementById('log-stderr').textContent = e.message;
-    document.getElementById('log-meta').textContent   = '❌ Запрос не удался';
+    document.getElementById('log-meta').textContent = '❌ Нет соединения';
     toast(e.message, 'error');
+    loadServices();
+    return;
   }
-  loadServices();
+
+  if (response.status === 401) { window.location.href = '/login'; return; }
+  if (!response.ok) {
+    const txt = await response.text();
+    deployStates[name] = 'error';
+    appendLine(txt, 'stderr');
+    document.getElementById('log-meta').textContent = `❌ HTTP ${response.status}`;
+    loadServices();
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+
+  const processEvents = (chunk) => {
+    buf += chunk;
+    const parts = buf.split('\n\n');
+    buf = parts.pop(); // последний неполный блок оставляем
+    for (const block of parts) {
+      const lines = block.split('\n');
+      let event = 'stdout', data = '';
+      for (const l of lines) {
+        if (l.startsWith('event: ')) event = l.slice(7).trim();
+        else if (l.startsWith('data: ')) data = l.slice(6);
+      }
+      if (event === 'done') {
+        try {
+          const meta = JSON.parse(data);
+          deployStates[name] = meta.success ? 'success' : 'error';
+          document.getElementById('log-meta').textContent =
+            `⏱ Время: ${meta.duration}   |   ${meta.success ? '✅ Успешно' : '❌ Ошибка'}`;
+          toast(meta.success ? `✅ ${name} задеплоен` : `❌ ${name}: ошибка`,
+                meta.success ? 'success' : 'error');
+          loadServices();
+        } catch {}
+      } else if (data) {
+        appendLine(data.replace(/\\n/g, '\n'), event);
+      }
+    }
+  };
+
+  // Читаем поток
+  const pump = async () => {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        processEvents(decoder.decode(value, { stream: true }));
+      }
+    } catch(e) {
+      if (e.name !== 'AbortError') {
+        deployStates[name] = 'error';
+        document.getElementById('log-meta').textContent = '❌ Соединение прервано';
+        loadServices();
+      }
+    }
+  };
+  pump();
 }
-function closeLog() { document.getElementById('log-panel').classList.remove('visible'); }
+
+function closeLog() {
+  document.getElementById('log-panel').classList.remove('visible');
+  if (currentES) { currentES.close(); currentES = null; }
+}
 
 // ── Logout ────────────────────────────────────────────────────
 async function logout() {

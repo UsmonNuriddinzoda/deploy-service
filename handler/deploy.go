@@ -7,6 +7,7 @@ import (
 	"deploy-service/runner"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -228,3 +229,91 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
+
+// ───────────────────────────── /deploy/stream ─────────────────────────────
+
+// DeployStreamHandler — GET /deploy/{service}/stream
+// Стримит вывод скрипта в реальном времени через SSE.
+func (h *Handler) DeployStreamHandler(w http.ResponseWriter, r *http.Request) {
+	// Поддержка только GET
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Извлекаем имя сервиса из /deploy/{service}/stream
+	path := strings.TrimPrefix(r.URL.Path, "/deploy/")
+	path = strings.TrimSuffix(path, "/stream")
+	serviceName := strings.Trim(path, "/")
+	if serviceName == "" {
+		jsonError(w, "service name is required", http.StatusBadRequest)
+		return
+	}
+
+	svc, err := h.registry.Get(serviceName)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			jsonError(w, "service '"+serviceName+"' not found", http.StatusNotFound)
+			return
+		}
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// SSE заголовки
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	h.log.Info("Stream deploy triggered: service=%q script=%q", svc.Name, svc.Script)
+
+	lines := make(chan runner.LineEvent, 64)
+	start := time.Now()
+
+	doneCh := make(chan struct{ success bool; err error }, 1)
+	go func() {
+		success, runErr := h.runner.RunStream(svc.Name, svc.Script, lines)
+		doneCh <- struct{ success bool; err error }{success, runErr}
+	}()
+
+	// Читаем строки и отправляем клиенту
+	for line := range lines {
+		event := "stdout"
+		if line.Stream == "stderr" {
+			event = "stderr"
+		}
+		text := strings.ReplaceAll(line.Text, "\n", "\\n")
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, text)
+		flusher.Flush()
+
+		// Проверяем отключение клиента
+		select {
+		case <-r.Context().Done():
+			return
+		default:
+		}
+	}
+
+	result := <-doneCh
+	duration := time.Since(start).Round(time.Millisecond)
+
+	status := "success"
+	if !result.success {
+		status = "error"
+	}
+	_, _ = fmt.Fprintf(w, "event: done\ndata: {\"success\":%v,\"duration\":\"%s\",\"status\":\"%s\"}\n\n",
+		result.success, duration, status)
+	flusher.Flush()
+
+	h.log.Info("Stream deploy of %q finished in %s success=%v", svc.Name, duration, result.success)
+}
+
+

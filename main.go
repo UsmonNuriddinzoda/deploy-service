@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -58,8 +59,15 @@ func main() {
 	mux.Handle("/services/", middleware.SessionOrTokenAuth(cfg.SecretToken, http.HandlerFunc(h.ServicesHandler)))
 
 	// ── Деплой ──────────────────────────────────────────────────
-	// POST /deploy/{service}     — запустить деплой
-	mux.Handle("/deploy/", middleware.SessionOrTokenAuth(cfg.SecretToken, http.HandlerFunc(h.DeployHandler)))
+	// POST /deploy/{service}          — запустить деплой (JSON-ответ целиком)
+	// GET  /deploy/{service}/stream   — стриминг вывода построчно (SSE)
+	mux.Handle("/deploy/", middleware.SessionOrTokenAuth(cfg.SecretToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/stream") {
+			h.DeployStreamHandler(w, r)
+		} else {
+			h.DeployHandler(w, r)
+		}
+	})))
 
 	// ── Health ──────────────────────────────────────────────────
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
