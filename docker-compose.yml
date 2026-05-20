@@ -16,9 +16,11 @@ services:
       UI_PASSWORD: ${UI_PASSWORD}
       SCRIPT_TIMEOUT: ${SCRIPT_TIMEOUT:-600}
     volumes:
-      # Скрипты деплоя — папка scripts/ рядом с docker-compose.yml
-      # На Linux сервере можно заменить на: /opt/scripts:/opt/scripts:ro
-      - ./scripts:/opt/scripts:ro
+      # Монтируем /opt с хоста — скрипты можно класть в любое место под /opt
+      # и указывать путь в UI как /opt/scripts/deploy-backend.sh
+      - /opt:/opt
+      # Docker socket — для управления контейнерами на этом же сервере
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
