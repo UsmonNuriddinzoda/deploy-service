@@ -18,7 +18,7 @@ RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o deploy-
 # ── Stage 2: Runtime ────────────────────────────────────────
 FROM alpine:3.19
 
-RUN apk add --no-cache bash ca-certificates tzdata docker-cli
+RUN apk add --no-cache bash ca-certificates tzdata docker-cli git openssh-client curl
 
 WORKDIR /app
 
