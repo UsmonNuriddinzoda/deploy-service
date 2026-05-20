@@ -7,9 +7,9 @@ services:
     container_name: deploy-service
     restart: unless-stopped
     ports:
-      - "${PORT:-8080}:8080"
+      - "${PORT:-8085}:8085"
     environment:
-      PORT: "8080"
+      PORT: "8085"
       SECRET_TOKEN: ${SECRET_TOKEN}
       DATABASE_URL: "postgres://${POSTGRES_USER:-deploy}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-deploy_db}?sslmode=disable"
       UI_USERNAME: ${UI_USERNAME:-admin}
