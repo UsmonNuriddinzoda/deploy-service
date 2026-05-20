@@ -5,20 +5,19 @@ RUN apk add --no-cache git
 
 WORKDIR /app
 
-# Копируем только go.mod — go.sum будет сгенерирован автоматически
-COPY go.mod ./
-RUN go mod download && go mod tidy 2>/dev/null || true
+# Копируем go.mod и go.sum вместе
+COPY go.mod go.sum ./
+RUN go mod download
 
 # Исходники
 COPY . .
 
-# go.sum не копируется (.dockerignore), go mod tidy создаёт правильный
-RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o deploy-service .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o deploy-service .
 
 # ── Stage 2: Runtime ────────────────────────────────────────
 FROM alpine:3.19
 
-RUN apk add --no-cache bash ca-certificates tzdata docker-cli git openssh-client curl
+RUN apk add --no-cache bash ca-certificates tzdata docker-cli docker-compose git openssh-client curl
 
 WORKDIR /app
 

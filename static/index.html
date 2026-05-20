@@ -71,13 +71,22 @@
     .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
     .log-title { font-size: 13px; font-weight: 700; }
     .log-body {
-      font-family: 'Fira Code', monospace; font-size: 13px; line-height: 1.75;
+      font-family: 'Fira Code', monospace; font-size: 13px; line-height: 1.65;
       white-space: pre-wrap; word-break: break-all;
-      max-height: 480px; overflow-y: auto;
+      max-height: 520px; overflow-y: auto;
       background: #050810; border-radius: 6px; padding: 12px 14px;
     }
-    .log-line-stdout { color: #a6e3a1; }
-    .log-line-stderr { color: #f38ba8; }
+    .log-line {
+      display: flex; gap: 8px; padding: 1px 0; border-bottom: 1px solid rgba(255,255,255,.03);
+    }
+    .log-line:last-child { border-bottom: none; }
+    .log-line-num { color: #3d4470; font-size: 11px; min-width: 32px; text-align: right; user-select: none; padding-top: 1px; flex-shrink: 0; }
+    .log-line-prefix { font-size: 11px; min-width: 52px; flex-shrink: 0; padding-top: 1px; font-weight: 700; }
+    .log-line-text { flex: 1; }
+    .log-line-stdout .log-line-prefix { color: #3ba55d; }
+    .log-line-stdout .log-line-text   { color: #a6e3a1; }
+    .log-line-stderr .log-line-prefix { color: #ed4245; }
+    .log-line-stderr .log-line-text   { color: #f38ba8; }
     .log-meta { color: var(--muted); font-size: 12px; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; align-items: center; justify-content: center; }
@@ -200,6 +209,7 @@ async function api(method, path, body) {
 
 // ── State ─────────────────────────────────────────────────────
 let deployStates = {};
+let logLineCount = 0;
 
 // ── Load & Render ─────────────────────────────────────────────
 async function loadServices() {
@@ -309,10 +319,26 @@ let currentES = null;
 
 function appendLine(text, type) {
   const body = document.getElementById('log-body');
-  const line = document.createElement('div');
-  line.className = type === 'stderr' ? 'log-line-stderr' : 'log-line-stdout';
-  line.textContent = text;
-  body.appendChild(line);
+  logLineCount++;
+  const row = document.createElement('div');
+  row.className = `log-line log-line-${type}`;
+
+  const num = document.createElement('span');
+  num.className = 'log-line-num';
+  num.textContent = logLineCount;
+
+  const prefix = document.createElement('span');
+  prefix.className = 'log-line-prefix';
+  prefix.textContent = type === 'stderr' ? '[ERR]' : '[OUT]';
+
+  const txt = document.createElement('span');
+  txt.className = 'log-line-text';
+  txt.textContent = text;
+
+  row.appendChild(num);
+  row.appendChild(prefix);
+  row.appendChild(txt);
+  body.appendChild(row);
   body.scrollTop = body.scrollHeight;
 }
 
@@ -326,6 +352,7 @@ async function deploy(name) {
   document.getElementById('log-title').textContent = `🚀 Деплой: ${name}`;
   document.getElementById('log-body').innerHTML = '';
   document.getElementById('log-meta').textContent = '⏳ Выполняется...';
+  logLineCount = 0;
   panel.classList.add('visible');
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
