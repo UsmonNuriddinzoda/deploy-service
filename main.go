@@ -44,7 +44,7 @@ func main() {
 		http.ServeFile(w, r, "./static/login.html")
 	})
 	// Обработчик логина/логаута
-	mux.HandleFunc("/ui/login",  handler.LoginHandler(cfg.UIUsername, cfg.UIPassword))
+	mux.HandleFunc("/ui/login", handler.LoginHandler(cfg.UIUsername, cfg.UIPassword))
 	mux.HandleFunc("/ui/logout", handler.LogoutHandler())
 	// Защищённый UI — только после входа
 	mux.Handle("/", middleware.SessionAuth(http.FileServer(http.Dir("./static"))))
@@ -67,6 +67,18 @@ func main() {
 		} else {
 			h.DeployHandler(w, r)
 		}
+	})))
+
+	// ── Логи Docker контейнера ───────────────────────────────────
+	// GET /logs/{service}/stream  — стриминг docker logs -f через SSE
+	mux.Handle("/logs/", middleware.SessionOrTokenAuth(cfg.SecretToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.LogsStreamHandler(w, r)
+	})))
+
+	// ── Статус Docker контейнера ─────────────────────────────────
+	// GET /status/{service}  — статус контейнера (docker inspect)
+	mux.Handle("/status/", middleware.SessionOrTokenAuth(cfg.SecretToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.StatusHandler(w, r)
 	})))
 
 	// ── Health ──────────────────────────────────────────────────
@@ -99,6 +111,8 @@ func main() {
 		log.Info("  PUT    /services/{name}    — update service")
 		log.Info("  DELETE /services/{name}    — delete service")
 		log.Info("  POST   /deploy/{service}   — run deploy")
+		log.Info("  GET    /logs/{service}/stream — docker logs stream")
+		log.Info("  GET    /status/{service}      — container status")
 		log.Info("  GET    /health             — health check")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal("Server error: %v", err)
@@ -116,4 +130,3 @@ func main() {
 	}
 	log.Info("Server stopped")
 }
-

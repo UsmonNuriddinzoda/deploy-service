@@ -26,15 +26,19 @@ func Connect(dsn string) (*sql.DB, error) {
 
 // migrate создаёт таблицу services если не существует.
 func migrate(db *sql.DB) error {
-	query := `
+	_, err := db.Exec(`
 	CREATE TABLE IF NOT EXISTS services (
 		name        VARCHAR(100) PRIMARY KEY,
 		description TEXT         NOT NULL DEFAULT '',
 		script      TEXT         NOT NULL,
+		container   VARCHAR(200) NOT NULL DEFAULT '',
 		created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 		updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-	);`
-	_, err := db.Exec(query)
-	return err
+	);`)
+	if err != nil {
+		return err
+	}
+	// миграция: добавляем колонку container если её нет
+	_, _ = db.Exec(`ALTER TABLE services ADD COLUMN IF NOT EXISTS container VARCHAR(200) NOT NULL DEFAULT '';`)
+	return nil
 }
-

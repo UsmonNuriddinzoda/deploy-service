@@ -65,6 +65,14 @@
     .badge-running { background: rgba(250,166,26,.12); color: var(--yellow); }
     .badge-success { background: rgba(59,165,93,.12); color: var(--green); }
     .badge-error   { background: rgba(237,66,69,.12); color: var(--red); }
+    .badge-status-running { background: rgba(59,165,93,.15); color: var(--green); border: 1px solid rgba(59,165,93,.3); }
+    .badge-status-stopped { background: rgba(237,66,69,.15); color: var(--red); border: 1px solid rgba(237,66,69,.3); }
+    .badge-status-unknown { background: rgba(114,118,125,.15); color: var(--muted); border: 1px solid var(--border); }
+
+    .status-bar { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+    .status-detail { font-size: 11px; color: var(--muted); }
+
+    #log-panel-title-mode { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
 
     #log-panel { margin-top: 20px; background: #080b12; border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; display: none; }
     #log-panel.visible { display: block; }
@@ -134,8 +142,11 @@
 
   <div id="log-panel">
     <div class="log-header">
-      <span class="log-title" id="log-title">Вывод деплоя</span>
-      <button class="btn btn-ghost btn-sm" onclick="closeLog()">✕ Закрыть</button>
+      <span class="log-title" id="log-title">Вывод деплоя<span id="log-panel-title-mode"></span></span>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" id="log-scroll-btn" onclick="toggleAutoScroll()">⬇ Авто</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeLog()">✕ Закрыть</button>
+      </div>
     </div>
     <div id="log-body" class="log-body"></div>
     <div id="log-meta" class="log-meta"></div>
@@ -155,6 +166,11 @@
       <label>Путь к скрипту *</label>
       <input id="add-script" placeholder="/opt/scripts/deploy-backend.sh" />
       <span class="hint">Абсолютный путь к bash-скрипту на сервере</span>
+    </div>
+    <div class="form-group">
+      <label>Docker контейнер</label>
+      <input id="add-container" placeholder="backend_app" />
+      <span class="hint">Имя контейнера для просмотра логов и статуса (необязательно)</span>
     </div>
     <div class="form-group">
       <label>Описание</label>
@@ -178,6 +194,11 @@
       <input id="edit-script" placeholder="/opt/scripts/deploy.sh" />
     </div>
     <div class="form-group">
+      <label>Docker контейнер</label>
+      <input id="edit-container" placeholder="backend_app" />
+      <span class="hint">Имя контейнера для логов и статуса</span>
+    </div>
+    <div class="form-group">
       <label>Описание</label>
       <input id="edit-desc" placeholder="Описание сервиса" />
     </div>
@@ -192,7 +213,7 @@
 <div id="toast-container"></div>
 
 <script>
-// ── API (uses session cookie automatically) ───────────────────
+// ── API ───────────────────────────────────────────────────────
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -209,7 +230,9 @@ async function api(method, path, body) {
 
 // ── State ─────────────────────────────────────────────────────
 let deployStates = {};
+let serviceStatuses = {};
 let logLineCount = 0;
+let autoScroll = true;
 
 // ── Load & Render ─────────────────────────────────────────────
 async function loadServices() {
@@ -235,15 +258,29 @@ function renderServices(services) {
     const badge = st==='running' ? `<span class="badge badge-running"><span class="spinner"></span> Деплой...</span>`
                 : st==='success' ? `<span class="badge badge-success">✓ Готово</span>`
                 : st==='error'   ? `<span class="badge badge-error">✗ Ошибка</span>` : '';
+
+    const ss = serviceStatuses[s.name];
+    let statusBadge = '';
+    if (ss) {
+      if (ss.running) statusBadge = `<span class="badge badge-status-running">● running</span>`;
+      else if (ss.status === 'not found') statusBadge = `<span class="badge badge-status-unknown">○ нет контейнера</span>`;
+      else statusBadge = `<span class="badge badge-status-stopped">● ${esc(ss.status)}</span>`;
+    }
+
+    const hasContainer = s.container && s.container !== '';
+
     return `<div class="svc-card" id="svc-${esc(s.name)}">
       <div class="svc-info">
         <div class="svc-name">${esc(s.name)} ${badge}</div>
         ${s.description ? `<div class="svc-desc">${esc(s.description)}</div>` : ''}
         <div class="svc-script">📄 ${esc(s.script)}</div>
+        ${hasContainer ? `<div class="status-bar">🐳 <span style="font-size:12px;color:var(--muted)">${esc(s.container)}</span> ${statusBadge}</div>` : ''}
       </div>
       <div class="svc-actions">
         <button class="btn btn-success btn-sm" onclick="deploy('${esc(s.name)}')" ${st==='running'?'disabled':''}>🚀 Deploy</button>
-        <button class="btn btn-ghost btn-sm" title="Редактировать" onclick="openEditModal('${esc(s.name)}','${esc(s.description||'')}','${esc(s.script)}')">✏️</button>
+        ${hasContainer ? `<button class="btn btn-ghost btn-sm" title="Логи контейнера" onclick="openLogs('${esc(s.name)}')">📋 Логи</button>` : ''}
+        ${hasContainer ? `<button class="btn btn-ghost btn-sm" title="Статус контейнера" onclick="checkStatus('${esc(s.name)}')">📊 Статус</button>` : ''}
+        <button class="btn btn-ghost btn-sm" title="Редактировать" onclick="openEditModal('${esc(s.name)}','${esc(s.description||'')}','${esc(s.script)}','${esc(s.container||'')}')">✏️</button>
         <button class="btn btn-danger btn-sm" title="Удалить" onclick="deleteService('${esc(s.name)}')">🗑️</button>
       </div>
     </div>`;
@@ -252,7 +289,7 @@ function renderServices(services) {
 
 // ── Add Modal ─────────────────────────────────────────────────
 function openAddModal() {
-  ['add-name','add-script','add-desc'].forEach(id => document.getElementById(id).value = '');
+  ['add-name','add-script','add-desc','add-container'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('add-error').textContent = '';
   document.getElementById('add-modal').classList.add('open');
   setTimeout(() => document.getElementById('add-name').focus(), 60);
@@ -260,11 +297,12 @@ function openAddModal() {
 function closeAddModal() { document.getElementById('add-modal').classList.remove('open'); }
 
 async function submitAdd() {
-  const name   = document.getElementById('add-name').value.trim();
-  const script = document.getElementById('add-script').value.trim();
-  const desc   = document.getElementById('add-desc').value.trim();
-  const errEl  = document.getElementById('add-error');
-  const btn    = document.getElementById('add-btn');
+  const name      = document.getElementById('add-name').value.trim();
+  const script    = document.getElementById('add-script').value.trim();
+  const desc      = document.getElementById('add-desc').value.trim();
+  const container = document.getElementById('add-container').value.trim();
+  const errEl     = document.getElementById('add-error');
+  const btn       = document.getElementById('add-btn');
   errEl.textContent = '';
   if (!name)   { errEl.textContent = 'Введите название'; return; }
   if (!/^[a-z0-9_-]+$/i.test(name)) { errEl.textContent = 'Только буквы, цифры, дефис, подчёркивание'; return; }
@@ -272,7 +310,7 @@ async function submitAdd() {
 
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Сохранение...';
   try {
-    await api('POST', '/services', { name, description: desc, script });
+    await api('POST', '/services', { name, description: desc, script, container });
     toast(`✅ Сервис «${name}» добавлен`, 'success');
     closeAddModal(); loadServices();
   } catch(e) { errEl.textContent = e.message; }
@@ -280,10 +318,11 @@ async function submitAdd() {
 }
 
 // ── Edit Modal ────────────────────────────────────────────────
-function openEditModal(name, desc, script) {
-  document.getElementById('edit-name').value   = name;
-  document.getElementById('edit-desc').value   = desc;
-  document.getElementById('edit-script').value = script;
+function openEditModal(name, desc, script, container) {
+  document.getElementById('edit-name').value      = name;
+  document.getElementById('edit-desc').value      = desc;
+  document.getElementById('edit-script').value    = script;
+  document.getElementById('edit-container').value = container || '';
   document.getElementById('edit-error').textContent = '';
   document.getElementById('edit-modal').classList.add('open');
   setTimeout(() => document.getElementById('edit-script').focus(), 60);
@@ -291,20 +330,21 @@ function openEditModal(name, desc, script) {
 function closeEditModal() { document.getElementById('edit-modal').classList.remove('open'); }
 
 async function saveEdit() {
-  const name   = document.getElementById('edit-name').value;
-  const desc   = document.getElementById('edit-desc').value.trim();
-  const script = document.getElementById('edit-script').value.trim();
-  const errEl  = document.getElementById('edit-error');
+  const name      = document.getElementById('edit-name').value;
+  const desc      = document.getElementById('edit-desc').value.trim();
+  const script    = document.getElementById('edit-script').value.trim();
+  const container = document.getElementById('edit-container').value.trim();
+  const errEl     = document.getElementById('edit-error');
   errEl.textContent = '';
   if (!script) { errEl.textContent = 'Путь к скрипту обязателен'; return; }
   try {
-    await api('PUT', `/services/${name}`, { description: desc, script });
+    await api('PUT', `/services/${name}`, { description: desc, script, container });
     toast(`✅ Сервис «${name}» обновлён`, 'success');
     closeEditModal(); loadServices();
   } catch(e) { errEl.textContent = e.message; }
 }
 
-// ── Delete ────────────────────────────────────────────────────
+// ── Delete ───────���────────────────────────────────────────────
 async function deleteService(name) {
   if (!confirm(`Удалить сервис «${name}»?\nЭто действие нельзя отменить.`)) return;
   try {
@@ -312,6 +352,93 @@ async function deleteService(name) {
     toast(`🗑️ Сервис «${name}» удалён`, 'success');
     loadServices();
   } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Status ────────────────────────────────────────────────────
+async function checkStatus(name) {
+  try {
+    const s = await api('GET', `/status/${name}`);
+    serviceStatuses[name] = s;
+    loadServices();
+
+    // Показываем в лог-панели
+    openLogPanel(`📊 Статус: ${name}`, 'статус');
+    const info = [
+      `Контейнер : ${s.container}`,
+      `Статус    : ${s.status}`,
+      `Запущен   : ${s.running ? 'Да ✅' : 'Нет ❌'}`,
+      `Образ     : ${s.image || '—'}`,
+      `Старт     : ${s.started_at || '—'}`,
+      `Стоп      : ${s.finished_at || '—'}`,
+      `Exit code : ${s.exit_code !== undefined ? s.exit_code : '—'}`,
+      s.error ? `Ошибка    : ${s.error}` : null,
+    ].filter(Boolean);
+    info.forEach(line => appendLine(line, 'stdout'));
+    document.getElementById('log-meta').textContent = s.running ? '✅ Контейнер запущен' : '⚪ Контейнер остановлен';
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+// ── Docker Logs (SSE streaming) ───────────────────────────────
+let currentLogsReader = null;
+
+async function openLogs(name) {
+  if (currentLogsReader) { try { currentLogsReader.cancel(); } catch {} currentLogsReader = null; }
+
+  openLogPanel(`📋 Логи: ${name}`, 'логи');
+  document.getElementById('log-meta').textContent = '⏳ Подключение к docker logs...';
+
+  let response;
+  try {
+    response = await fetch(`/logs/${name}/stream`, { method: 'GET', credentials: 'same-origin' });
+  } catch(e) {
+    appendLine('❌ Нет соединения: ' + e.message, 'stderr');
+    return;
+  }
+  if (response.status === 401) { window.location.href = '/login'; return; }
+  if (!response.ok) {
+    appendLine(`❌ HTTP ${response.status}`, 'stderr');
+    return;
+  }
+
+  document.getElementById('log-meta').textContent = '🔴 Live — docker logs -f';
+
+  const reader = response.body.getReader();
+  currentLogsReader = reader;
+  const decoder = new TextDecoder();
+  let buf = '';
+
+  const processEvents = (chunk) => {
+    buf += chunk;
+    const parts = buf.split('\n\n');
+    buf = parts.pop();
+    for (const block of parts) {
+      const lines = block.split('\n');
+      let event = 'stdout', data = '';
+      for (const l of lines) {
+        if (l.startsWith('event: ')) event = l.slice(7).trim();
+        else if (l.startsWith('data: ')) data = l.slice(6);
+      }
+      if (event === 'done') {
+        document.getElementById('log-meta').textContent = '⏹ Поток завершён';
+      } else if (event === 'error') {
+        appendLine(data, 'stderr');
+      } else if (data) {
+        appendLine(data.replace(/\\n/g, '\n'), event);
+      }
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      processEvents(decoder.decode(value, { stream: true }));
+    }
+  } catch(e) {
+    if (e.name !== 'AbortError') appendLine('❌ ' + e.message, 'stderr');
+  }
 }
 
 // ── Deploy (SSE streaming) ────────────────────────────────────
@@ -339,38 +466,48 @@ function appendLine(text, type) {
   row.appendChild(prefix);
   row.appendChild(txt);
   body.appendChild(row);
-  body.scrollTop = body.scrollHeight;
+  if (autoScroll) body.scrollTop = body.scrollHeight;
+}
+
+function openLogPanel(title, mode) {
+  document.getElementById('log-title').childNodes[0].textContent = title;
+  const modeEl = document.getElementById('log-panel-title-mode');
+  if (modeEl) modeEl.textContent = '';
+  document.getElementById('log-body').innerHTML = '';
+  document.getElementById('log-meta').textContent = '';
+  logLineCount = 0;
+  autoScroll = true;
+  const panel = document.getElementById('log-panel');
+  panel.classList.add('visible');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function toggleAutoScroll() {
+  autoScroll = !autoScroll;
+  const btn = document.getElementById('log-scroll-btn');
+  btn.textContent = autoScroll ? '⬇ Авто' : '⏸ Пауза';
+  if (autoScroll) {
+    const body = document.getElementById('log-body');
+    body.scrollTop = body.scrollHeight;
+  }
 }
 
 async function deploy(name) {
-  // Закрываем предыдущий стрим если есть
   if (currentES) { currentES.close(); currentES = null; }
+  if (currentLogsReader) { try { currentLogsReader.cancel(); } catch {} currentLogsReader = null; }
 
   deployStates[name] = 'running'; loadServices();
 
-  const panel = document.getElementById('log-panel');
-  document.getElementById('log-title').textContent = `🚀 Деплой: ${name}`;
-  document.getElementById('log-body').innerHTML = '';
+  openLogPanel(`🚀 Деплой: ${name}`, 'деплой');
   document.getElementById('log-meta').textContent = '⏳ Выполняется...';
-  logLineCount = 0;
-  panel.classList.add('visible');
-  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  // Открываем SSE соединение через GET /deploy/{name}/stream
-  // Браузерный EventSource не поддерживает кастомные заголовки,
-  // поэтому используем fetch с ReadableStream
   let response;
   try {
-    response = await fetch(`/deploy/${name}/stream`, {
-      method: 'GET',
-      credentials: 'same-origin',
-    });
+    response = await fetch(`/deploy/${name}/stream`, { method: 'GET', credentials: 'same-origin' });
   } catch(e) {
     deployStates[name] = 'error';
     document.getElementById('log-meta').textContent = '❌ Нет соединения';
-    toast(e.message, 'error');
-    loadServices();
-    return;
+    toast(e.message, 'error'); loadServices(); return;
   }
 
   if (response.status === 401) { window.location.href = '/login'; return; }
@@ -379,8 +516,7 @@ async function deploy(name) {
     deployStates[name] = 'error';
     appendLine(txt, 'stderr');
     document.getElementById('log-meta').textContent = `❌ HTTP ${response.status}`;
-    loadServices();
-    return;
+    loadServices(); return;
   }
 
   const reader = response.body.getReader();
@@ -390,7 +526,7 @@ async function deploy(name) {
   const processEvents = (chunk) => {
     buf += chunk;
     const parts = buf.split('\n\n');
-    buf = parts.pop(); // последний неполный блок оставляем
+    buf = parts.pop();
     for (const block of parts) {
       const lines = block.split('\n');
       let event = 'stdout', data = '';
@@ -414,7 +550,6 @@ async function deploy(name) {
     }
   };
 
-  // Читаем поток
   const pump = async () => {
     try {
       while (true) {
@@ -436,6 +571,7 @@ async function deploy(name) {
 function closeLog() {
   document.getElementById('log-panel').classList.remove('visible');
   if (currentES) { currentES.close(); currentES = null; }
+  if (currentLogsReader) { try { currentLogsReader.cancel(); } catch {} currentLogsReader = null; }
 }
 
 // ── Logout ────────────────────────────────────────────────────
@@ -463,7 +599,7 @@ function esc(s) {
 });
 
 // Enter key submits add form
-['add-name','add-script','add-desc'].forEach(id => {
+['add-name','add-script','add-desc','add-container'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => { if(e.key==='Enter') submitAdd(); });
 });
 

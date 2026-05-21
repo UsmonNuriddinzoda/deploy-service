@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -69,12 +70,13 @@ func (h *Handler) listServices(w http.ResponseWriter, _ *http.Request) {
 }
 
 // POST /services — создать сервис
-// Body: {"name":"bot","description":"Telegram Bot","script":"/opt/scripts/deploy-bot.sh"}
+// Body: {"name":"bot","description":"Telegram Bot","script":"/opt/scripts/deploy-bot.sh","container":"bot_container"}
 func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Script      string `json:"script"`
+		Container   string `json:"container"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
@@ -85,7 +87,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := h.repo.Create(req.Name, req.Description, req.Script)
+	svc, err := h.repo.Create(req.Name, req.Description, req.Script, req.Container)
 	if err != nil {
 		h.log.Error("createService: %v", err)
 		jsonError(w, "failed to create service: "+err.Error(), http.StatusInternalServerError)
@@ -112,11 +114,12 @@ func (h *Handler) getService(w http.ResponseWriter, _ *http.Request, name string
 }
 
 // PUT /services/{name} — обновить сервис
-// Body: {"description":"...","script":"..."}
+// Body: {"description":"...","script":"...","container":"..."}
 func (h *Handler) updateService(w http.ResponseWriter, r *http.Request, name string) {
 	var req struct {
 		Description string `json:"description"`
 		Script      string `json:"script"`
+		Container   string `json:"container"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
@@ -127,7 +130,7 @@ func (h *Handler) updateService(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 
-	svc, err := h.repo.Update(name, req.Description, req.Script)
+	svc, err := h.repo.Update(name, req.Description, req.Script, req.Container)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			jsonError(w, "service '"+name+"' not found", http.StatusNotFound)
@@ -230,6 +233,188 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// ───────────────────────────── /logs ─────────────────────────────
+
+// LogsStreamHandler — GET /logs/{service}/stream
+// Стримит вывод `docker logs -f --tail=200 {container}` через SSE.
+func (h *Handler) LogsStreamHandler(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/logs/")
+	path = strings.TrimSuffix(path, "/stream")
+	serviceName := strings.Trim(path, "/")
+	if serviceName == "" {
+		jsonError(w, "service name is required", http.StatusBadRequest)
+		return
+	}
+
+	svc, err := h.registry.Get(serviceName)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			jsonError(w, "service '"+serviceName+"' not found", http.StatusNotFound)
+			return
+		}
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	container := svc.Container
+	if container == "" {
+		container = svc.Name
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		jsonError(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	ctx := r.Context()
+	cmd := exec.CommandContext(ctx, "docker", "logs", "-f", "--tail=200", container)
+
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+
+	if err := cmd.Start(); err != nil {
+		_, _ = fmt.Fprintf(w, "event: error\ndata: failed to start docker logs: %s\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	send := func(stream, text string) {
+		text = strings.ReplaceAll(text, "\n", "\\n")
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", stream, text)
+		flusher.Flush()
+	}
+
+	done := make(chan struct{}, 2)
+	readLines := func(rc interface{ Read([]byte) (int, error) }, stream string) {
+		buf := make([]byte, 4096)
+		var leftover string
+		for {
+			n, err := rc.Read(buf)
+			if n > 0 {
+				chunk := leftover + string(buf[:n])
+				lines := strings.Split(chunk, "\n")
+				leftover = lines[len(lines)-1]
+				for _, l := range lines[:len(lines)-1] {
+					if l != "" {
+						send(stream, l)
+					}
+				}
+			}
+			if err != nil {
+				if leftover != "" {
+					send(stream, leftover)
+				}
+				break
+			}
+		}
+		done <- struct{}{}
+	}
+
+	go readLines(stdout, "stdout")
+	go readLines(stderr, "stderr")
+
+	<-done
+	<-done
+	_ = cmd.Wait()
+
+	_, _ = fmt.Fprintf(w, "event: done\ndata: {\"container\":\"%s\"}\n\n", container)
+	flusher.Flush()
+}
+
+// ───────────────────────────── /status ─────────────────────────────
+
+// StatusHandler — GET /status/{service}
+// Возвращает статус Docker-контейнера.
+func (h *Handler) StatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	serviceName := strings.TrimPrefix(r.URL.Path, "/status/")
+	serviceName = strings.Trim(serviceName, "/")
+	if serviceName == "" {
+		jsonError(w, "service name is required", http.StatusBadRequest)
+		return
+	}
+
+	svc, err := h.registry.Get(serviceName)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			jsonError(w, "service '"+serviceName+"' not found", http.StatusNotFound)
+			return
+		}
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	container := svc.Container
+	if container == "" {
+		container = svc.Name
+	}
+
+	// docker inspect --format
+	out, err := exec.Command("docker", "inspect",
+		"--format", `{"status":"{{.State.Status}}","running":{{.State.Running}},"started_at":"{{.State.StartedAt}}","finished_at":"{{.State.FinishedAt}}","exit_code":{{.State.ExitCode}},"image":"{{.Config.Image}}"}`,
+		container,
+	).Output()
+
+	type StatusResp struct {
+		Service    string `json:"service"`
+		Container  string `json:"container"`
+		Status     string `json:"status"`
+		Running    bool   `json:"running"`
+		StartedAt  string `json:"started_at"`
+		FinishedAt string `json:"finished_at"`
+		ExitCode   int    `json:"exit_code"`
+		Image      string `json:"image"`
+		Error      string `json:"error,omitempty"`
+	}
+
+	if err != nil {
+		jsonOK(w, StatusResp{
+			Service:   serviceName,
+			Container: container,
+			Status:    "not found",
+			Error:     "container not found or docker error: " + err.Error(),
+		})
+		return
+	}
+
+	// Парсим вывод docker inspect
+	var inner struct {
+		Status     string `json:"status"`
+		Running    bool   `json:"running"`
+		StartedAt  string `json:"started_at"`
+		FinishedAt string `json:"finished_at"`
+		ExitCode   int    `json:"exit_code"`
+		Image      string `json:"image"`
+	}
+	raw := strings.TrimSpace(string(out))
+	if err := json.Unmarshal([]byte(raw), &inner); err != nil {
+		jsonOK(w, StatusResp{Service: serviceName, Container: container, Status: "parse error", Error: err.Error()})
+		return
+	}
+
+	jsonOK(w, StatusResp{
+		Service:    serviceName,
+		Container:  container,
+		Status:     inner.Status,
+		Running:    inner.Running,
+		StartedAt:  inner.StartedAt,
+		FinishedAt: inner.FinishedAt,
+		ExitCode:   inner.ExitCode,
+		Image:      inner.Image,
+	})
+}
+
 // ───────────────────────────── /deploy/stream ─────────────────────────────
 
 // DeployStreamHandler — GET /deploy/{service}/stream
@@ -278,10 +463,16 @@ func (h *Handler) DeployStreamHandler(w http.ResponseWriter, r *http.Request) {
 	lines := make(chan runner.LineEvent, 64)
 	start := time.Now()
 
-	doneCh := make(chan struct{ success bool; err error }, 1)
+	doneCh := make(chan struct {
+		success bool
+		err     error
+	}, 1)
 	go func() {
 		success, runErr := h.runner.RunStream(svc.Name, svc.Script, lines)
-		doneCh <- struct{ success bool; err error }{success, runErr}
+		doneCh <- struct {
+			success bool
+			err     error
+		}{success, runErr}
 	}()
 
 	// Читаем строки и отправляем клиенту
@@ -315,5 +506,3 @@ func (h *Handler) DeployStreamHandler(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Info("Stream deploy of %q finished in %s success=%v", svc.Name, duration, result.success)
 }
-
-
