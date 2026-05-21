@@ -13,7 +13,15 @@ type Service struct {
 	Container   string `json:"container"`
 }
 
-// ...existing code...
+// Registry работает с репозиторием сервисов из БД.
+type Registry struct {
+	repo *db.ServiceRepo
+}
+
+// New создаёт Registry на основе репозитория БД.
+func New(repo *db.ServiceRepo) *Registry {
+	return &Registry{repo: repo}
+}
 
 // Get возвращает сервис по имени из БД.
 func (r *Registry) Get(name string) (*Service, error) {
